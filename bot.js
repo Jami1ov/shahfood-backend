@@ -31,7 +31,7 @@ const initBot = (app) => {
     return sessions[chatId];
   };
 
-  const mainMenu = (chatId, text = 'Assalomu alaykum! ShahFood — Shahrisabz yetkazib berish xizmati 🍽️') => {
+  const mainMenu = (chatId, text = 'Assalomu alaykum! Dasturxon — Shahrisabz yetkazib berish xizmati 🍽️') => {
     bot.sendMessage(chatId, text, {
       reply_markup: {
         keyboard: [
