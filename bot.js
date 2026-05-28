@@ -14,6 +14,14 @@ const haversine = (lat1, lon1, lat2, lon2) => {
 
 const fmt = n => n.toLocaleString('uz-UZ') + " so'm";
 
+// Telefon raqamini normallashtirish: faqat raqamlar, 998... ko'rinishida
+const normPhone = (p) => {
+  let d = String(p || '').replace(/\D/g, '');
+  if (d.startsWith('998')) return d;
+  if (d.length === 9) return '998' + d;
+  return d;
+};
+
 // Har bir foydalanuvchining sessiya holati
 const sessions = {};
 
@@ -25,6 +33,9 @@ const initBot = (app) => {
 
   const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
   console.log('🤖 Telegram bot ishga tushdi');
+
+  // Auth route'lari kodni Telegram orqali yuborishi uchun botni app'ga ulaymiz
+  if (app && typeof app.set === 'function') app.set('bot', bot);
 
   const getSession = (chatId) => {
     if (!sessions[chatId]) sessions[chatId] = { step: 'start', cart: {}, restoId: null };
@@ -136,22 +147,29 @@ const initBot = (app) => {
     const chatId = msg.chat.id;
     const sess = getSession(chatId);
 
-    // Foydalanuvchini topish yoki yaratish
-    let { data: user } = await supabase.from('users')
-      .select('*').eq('phone', `tg_${chatId}`).single();
+    const { data: user } = await supabase.from('users')
+      .select('*').eq('telegram_id', chatId).single();
 
-    if (!user) {
-      const { data } = await supabase.from('users').insert({
-        phone: `tg_${chatId}`,
-        name: msg.from.first_name || 'Telegram foydalanuvchi',
-        role: 'customer'
-      }).select().single();
-      user = data;
+    // Ro'yxatdan o'tgan (haqiqiy raqami bor) — to'g'ridan menyu
+    if (user && user.phone && !String(user.phone).startsWith('tg_')) {
+      sess.userId = user.id;
+      sess.userName = user.name;
+      mainMenu(chatId, `Assalomu alaykum, ${user.name || ''}! 🍽️\nDasturxon — Shahrisabz yetkazib berish xizmati`);
+      return;
     }
 
-    sess.userId = user?.id;
-    sess.userName = user?.name || msg.from.first_name;
-    mainMenu(chatId);
+    // Ro'yxatdan o'tmagan — telefon raqam so'raymiz
+    sess.step = 'await_contact';
+    bot.sendMessage(chatId,
+      'Assalomu alaykum! 🍽️\nDasturxon — Shahrisabz yetkazib berish xizmatiga xush kelibsiz.\n\nBoshlash uchun telefon raqamingizni ulashing 👇',
+      {
+        reply_markup: {
+          keyboard: [[{ text: '📱 Raqamni ulashish', request_contact: true }]],
+          resize_keyboard: true,
+          one_time_keyboard: true
+        }
+      }
+    );
   });
 
   // Restoranlar ro'yxati
@@ -160,11 +178,73 @@ const initBot = (app) => {
     const text = msg.text;
     const sess = getSession(chatId);
 
+    // Kontakt ulashilganda — ro'yxatdan o'tkazish
+    if (msg.contact) {
+      const phone = normPhone(msg.contact.phone_number);
+      const name = msg.from.first_name || 'Telegram foydalanuvchi';
+      let user;
+
+      const { data: byPhone } = await supabase.from('users').select('*').eq('phone', phone).single();
+      if (byPhone) {
+        await supabase.from('users').update({ telegram_id: chatId }).eq('id', byPhone.id);
+        user = byPhone;
+      } else {
+        const { data: byTg } = await supabase.from('users').select('*').eq('telegram_id', chatId).single();
+        if (byTg) {
+          await supabase.from('users').update({ phone, name }).eq('id', byTg.id);
+          user = { ...byTg, phone, name };
+        } else {
+          const { data: nu } = await supabase.from('users')
+            .insert({ phone, name, role: 'customer', telegram_id: chatId, is_verified: true })
+            .select().single();
+          user = nu;
+        }
+      }
+
+      sess.userId = user?.id;
+      sess.userName = name;
+      sess.step = 'await_location';
+
+      bot.sendMessage(chatId,
+        `Rahmat, ${name}! ✅ Raqamingiz saqlandi.\n\nEndi yetkazib berish manzilingizni yuboring (yoki keyinroq) 👇`,
+        {
+          reply_markup: {
+            keyboard: [
+              [{ text: '📍 Manzilni ulashish', request_location: true }],
+              [{ text: '⏭ Keyinroq' }]
+            ],
+            resize_keyboard: true,
+            one_time_keyboard: true
+          }
+        }
+      );
+      return;
+    }
+
     // Manzil yuborilganda
     if (msg.location) {
       sess.userLat = msg.location.latitude;
       sess.userLon = msg.location.longitude;
-      bot.sendMessage(chatId, `📍 Manzilingiz aniqlandi! Eng yaqin restoranlar ko'rsatilmoqda...`);
+
+      if (sess.userId) {
+        await supabase.from('addresses').update({ is_active: false }).eq('user_id', sess.userId);
+        await supabase.from('addresses').insert({
+          user_id: sess.userId,
+          label: 'Mening manzilim',
+          address: `Shahrisabz (${sess.userLat.toFixed(4)}, ${sess.userLon.toFixed(4)})`,
+          lat: sess.userLat,
+          lon: sess.userLon,
+          is_active: true
+        });
+      }
+
+      if (sess.step === 'await_location') {
+        sess.step = 'start';
+        mainMenu(chatId, '✅ Manzilingiz saqlandi! Endi buyurtma berishingiz mumkin. 🍽️');
+      } else {
+        bot.sendMessage(chatId, '📍 Manzilingiz yangilandi!');
+      }
+      return;
     }
 
     if (text === '🍽️ Restoranlar' || text === '/restaurants') {
@@ -345,6 +425,11 @@ const initBot = (app) => {
       ).join('\n\n');
 
       bot.sendMessage(chatId, `📦 <b>So'nggi buyurtmalar:</b>\n\n${list}`, { parse_mode: 'HTML' });
+    }
+
+    else if (text === '⏭ Keyinroq') {
+      sess.step = 'start';
+      mainMenu(chatId);
     }
 
     else if (text === '🔙 Orqaga' || text === '❌ Bekor qilish') {
