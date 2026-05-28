@@ -102,27 +102,72 @@ router.get('/:id', auth, async (req, res) => {
   res.json(data);
 });
 
-// PATCH /api/orders/:id/stage — holat yangilash (admin/courier)
+// PATCH /api/orders/:id/stage — holat yangilash (admin/courier/restaurant_owner)
 router.patch('/:id/stage', auth, async (req, res) => {
-  if (!['admin', 'courier'].includes(req.user.role))
+  if (!['admin', 'courier', 'restaurant_owner'].includes(req.user.role))
     return res.status(403).json({ error: 'Ruxsat yo\'q' });
 
   const newStage = req.body.stage;
   if (newStage < 0 || newStage > 3)
     return res.status(400).json({ error: 'Noto\'g\'ri holat' });
 
+  // Restoran egasi faqat o'z restorani buyurtmalarini va faqat 0→1 qadamini o'zgartira oladi
+  if (req.user.role === 'restaurant_owner') {
+    const { data: ord } = await supabase
+      .from('orders').select('restaurant_id, stage').eq('id', req.params.id).single();
+    if (!ord) return res.status(404).json({ error: 'Buyurtma topilmadi' });
+    const { data: resto } = await supabase
+      .from('restaurants').select('owner_telegram_id').eq('id', ord.restaurant_id).single();
+    if (!resto || resto.owner_telegram_id !== req.user.telegram_id)
+      return res.status(403).json({ error: 'Bu buyurtma sizning restoraningizniki emas' });
+    if (newStage > 2) return res.status(403).json({ error: 'Bu qadamni faqat kuryer yoki admin qila oladi' });
+  }
+
   const { data: order, error } = await supabase
     .from('orders')
     .update({ stage: newStage, status: STAGE_LABELS[newStage], updated_at: new Date() })
     .eq('id', req.params.id)
-    .select('*, users(name)').single();
+    .select('*, users(name, telegram_id), restaurants(name, emoji)').single();
 
   if (error) return res.status(500).json({ error: error.message });
 
   // Mijozga Telegram xabari
-  // (keyingi bosqichda user_telegram_id qo'shamiz)
+  const stageEmojis = ['✅', '👨‍🍳', '🛵', '🎉'];
+  const stageMsg = [
+    'Buyurtmangiz qabul qilindi va restoran tasdiqlashini kutmoqda',
+    'Buyurtmangiz tayyorlanmoqda',
+    'Kuryer yo\'lga chiqdi',
+    'Buyurtmangiz yetkazildi! Yoqimli ishtaha 🍽️'
+  ];
+  if (order.users?.telegram_id) {
+    const msg = `${stageEmojis[newStage]} <b>Buyurtma #${order.id}</b>\n${order.restaurants?.emoji || '🍽️'} ${order.restaurants?.name || ''}\n\n${stageMsg[newStage]}`;
+    await notifyTelegram(order.users.telegram_id, msg);
+  }
 
   res.json(order);
+});
+
+// GET /api/orders/restaurant/mine — restoran egasining buyurtmalari
+router.get('/restaurant/mine', auth, async (req, res) => {
+  if (req.user.role !== 'restaurant_owner' && req.user.role !== 'admin')
+    return res.status(403).json({ error: 'Ruxsat yo\'q' });
+
+  // Bu egaga tegishli restoranlarni topamiz
+  const { data: myRestos } = await supabase
+    .from('restaurants').select('id, name, emoji')
+    .eq('owner_telegram_id', req.user.telegram_id);
+
+  if (!myRestos?.length) return res.json({ restaurants: [], orders: [] });
+
+  const restoIds = myRestos.map(r => r.id);
+  const { data: orders } = await supabase
+    .from('orders')
+    .select('*, users(name, phone)')
+    .in('restaurant_id', restoIds)
+    .order('created_at', { ascending: false })
+    .limit(100);
+
+  res.json({ restaurants: myRestos, orders: orders || [] });
 });
 
 // POST /api/orders/:id/review — sharh
