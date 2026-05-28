@@ -147,19 +147,27 @@ router.patch('/:id/stage', auth, async (req, res) => {
   res.json(order);
 });
 
-// GET /api/orders/restaurant/mine — restoran egasining buyurtmalari
+// GET /api/orders/restaurant/mine — restoran egasi yoki kuzatuvchi admin
 router.get('/restaurant/mine', auth, async (req, res) => {
-  if (req.user.role !== 'restaurant_owner' && req.user.role !== 'admin')
+  if (!['restaurant_owner', 'admin'].includes(req.user.role))
     return res.status(403).json({ error: 'Ruxsat yo\'q' });
 
-  // Bu egaga tegishli restoranlarni topamiz
-  const { data: myRestos } = await supabase
-    .from('restaurants').select('id, name, emoji')
-    .eq('owner_telegram_id', req.user.telegram_id);
+  // Admin uchun: barcha restoranlarni ko'rsatamiz (kuzatish rejimi)
+  // Restoran egasi uchun: faqat unga biriktirilgan
+  let restoQuery = supabase.from('restaurants').select('id, name, emoji');
+  if (req.user.role === 'restaurant_owner') {
+    restoQuery = restoQuery.eq('owner_telegram_id', req.user.telegram_id);
+  } else {
+    restoQuery = restoQuery.order('id');
+  }
+  const { data: myRestos } = await restoQuery;
 
-  if (!myRestos?.length) return res.json({ restaurants: [], orders: [] });
+  if (!myRestos?.length) return res.json({ restaurants: [], orders: [], viewer: req.user.role });
 
-  const restoIds = myRestos.map(r => r.id);
+  // Filter — agar admin restoran tanlasa, query parametrlari orqali
+  const requestedId = req.query.restaurant_id ? Number(req.query.restaurant_id) : null;
+  const restoIds = requestedId ? [requestedId] : myRestos.map(r => r.id);
+
   const { data: orders } = await supabase
     .from('orders')
     .select('*, users(name, phone)')
@@ -167,7 +175,12 @@ router.get('/restaurant/mine', auth, async (req, res) => {
     .order('created_at', { ascending: false })
     .limit(100);
 
-  res.json({ restaurants: myRestos, orders: orders || [] });
+  res.json({
+    restaurants: myRestos,
+    orders: orders || [],
+    viewer: req.user.role,    // 'admin' (kuzatuvchi) yoki 'restaurant_owner' (haqiqiy egasi)
+    selected_restaurant_id: requestedId
+  });
 });
 
 // POST /api/orders/:id/review — sharh
