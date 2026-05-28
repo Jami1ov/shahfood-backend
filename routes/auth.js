@@ -161,4 +161,24 @@ router.put('/profile', require('../middleware/auth').auth, async (req, res) => {
   res.json(publicUser(data));
 });
 
+// ── POST /api/auth/addresses  (auth) { label?, address, lat, lon } ──────────────
+router.post('/addresses', require('../middleware/auth').auth, async (req, res) => {
+  const { label, address, lat, lon } = req.body;
+  if (!address) return res.status(400).json({ error: 'Manzil kerak' });
+
+  await supabase.from('addresses').update({ is_active: false }).eq('user_id', req.user.id);
+
+  const { data, error } = await supabase.from('addresses').insert({
+    user_id: req.user.id,
+    label: label || 'Manzil',
+    address,
+    lat: lat || 39.0593,
+    lon: lon || 66.8487,
+    is_active: true
+  }).select().single();
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
 module.exports = router;
