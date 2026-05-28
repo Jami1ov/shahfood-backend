@@ -10,7 +10,7 @@ const PORT = process.env.PORT || 3001;
 
 // ── Middleware ──────────────────────────────────
 app.use(helmet());
-app.use(cors({ origin: '*', methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'], allowedHeaders: ['Content-Type','Authorization'] }));app.use(express.json());
+app.use(cors({ origin: '*', methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'], allowedHeaders: ['Content-Type','Authorization'] }));app.use(express.json({ limit: '8mb' }));
 app.use(morgan('dev'));
 
 // Rate limiting — spam himoyasi
