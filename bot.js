@@ -43,6 +43,94 @@ const initBot = (app) => {
     });
   };
 
+  // Restoran kategoriyalarini ko'rsatish
+  const showCategories = async (chatId, sess) => {
+    const { data: cats } = await supabase
+      .from('menu_categories').select('*')
+      .eq('restaurant_id', sess.restoId).order('sort_order');
+
+    sess.categories = cats || [];
+    sess.step = 'menu';
+
+    if (!cats || !cats.length) {
+      bot.sendMessage(chatId, 'Bu restoranda hozircha menyu qo\'shilmagan 🍽️', {
+        reply_markup: { keyboard: [[{ text: '🔙 Orqaga' }]], resize_keyboard: true }
+      });
+      return;
+    }
+
+    const keyboard = cats.map(c => ([{ text: `📂 ${c.name}` }]));
+    keyboard.push([{ text: '🛒 Savatcha' }, { text: '🔙 Orqaga' }]);
+
+    bot.sendMessage(chatId, 'Kategoriyani tanlang 👇', {
+      reply_markup: { keyboard, resize_keyboard: true }
+    });
+  };
+
+  // Kategoriya ichidagi taomlarni rasm + tugma bilan ko'rsatish
+  const showItems = async (chatId, sess, cat) => {
+    const { data: items } = await supabase
+      .from('menu_items').select('*')
+      .eq('category_id', cat.id).eq('is_available', true);
+
+    if (!items || !items.length) {
+      bot.sendMessage(chatId, 'Bu kategoriyada hozircha taom yo\'q.');
+      return;
+    }
+
+    bot.sendMessage(chatId, `<b>📂 ${cat.name}</b>`, { parse_mode: 'HTML' });
+
+    for (const item of items) {
+      const caption =
+        `<b>${item.name}</b>\n` +
+        (item.description ? `${item.description}\n` : '') +
+        `💰 ${fmt(item.price)}`;
+      const inline = {
+        inline_keyboard: [[{ text: '➕ Savatga qo\'shish', callback_data: `add_${item.id}` }]]
+      };
+
+      if (item.image_url) {
+        await bot.sendPhoto(chatId, item.image_url, { caption, parse_mode: 'HTML', reply_markup: inline })
+          .catch(() => bot.sendMessage(chatId, caption, { parse_mode: 'HTML', reply_markup: inline }));
+      } else {
+        await bot.sendMessage(chatId, caption, { parse_mode: 'HTML', reply_markup: inline });
+      }
+    }
+
+    bot.sendMessage(chatId, '⬇️ Boshqa kategoriya yoki 🛒 Savatcha', {
+      reply_markup: {
+        keyboard: [[{ text: '🔙 Menyuga qaytish' }, { text: '🛒 Savatcha' }]],
+        resize_keyboard: true
+      }
+    });
+  };
+
+  // Inline tugma bosilganda (taomni savatga qo'shish)
+  bot.on('callback_query', async (q) => {
+    const chatId = q.message.chat.id;
+    const sess = getSession(chatId);
+    const data = q.data || '';
+
+    if (data.startsWith('add_')) {
+      const itemId = parseInt(data.slice(4), 10);
+      const { data: item } = await supabase
+        .from('menu_items').select('*').eq('id', itemId).single();
+
+      if (!item) {
+        bot.answerCallbackQuery(q.id, { text: 'Taom topilmadi' });
+        return;
+      }
+
+      sess.cart[item.id] = { ...item, qty: (sess.cart[item.id]?.qty || 0) + 1 };
+      const qty = sess.cart[item.id].qty;
+      const total = Object.values(sess.cart).reduce((s, i) => s + i.price * i.qty, 0);
+
+      bot.answerCallbackQuery(q.id, {
+        text: `✅ ${item.name} (${qty}x) — savatda ${fmt(total)}`
+      });
+    }
+  });
+
   // /start
   bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
@@ -113,20 +201,12 @@ const initBot = (app) => {
         sess.restoId = chosen.id;
         sess.restoName = chosen.name;
         sess.cart = {};
-        sess.step = 'menu';
-
-        const { data: cats } = await supabase
-          .from('menu_categories').select('*')
-          .eq('restaurant_id', chosen.id).order('sort_order');
-
-        const keyboard = cats.map(c => ([{ text: `📂 ${c.name}` }]));
-        keyboard.push([{ text: '🛒 Savatcha' }, { text: '🔙 Orqaga' }]);
 
         bot.sendMessage(chatId,
           `<b>${chosen.emoji} ${chosen.name}</b>\n⭐ ${chosen.rating} · ${fmt(chosen.delivery_fee)} yetkazma · Min: ${fmt(chosen.min_order)}`,
-          { parse_mode: 'HTML', reply_markup: { keyboard, resize_keyboard: true } }
+          { parse_mode: 'HTML' }
         );
-        sess.categories = cats;
+        await showCategories(chatId, sess);
       }
     }
 
@@ -134,40 +214,12 @@ const initBot = (app) => {
       const catName = text.replace('📂 ', '');
       const cat = sess.categories?.find(c => c.name === catName);
       if (!cat) return;
-
-      const { data: items } = await supabase
-        .from('menu_items').select('*')
-        .eq('category_id', cat.id).eq('is_available', true);
-
-      sess.currentItems = items;
-      sess.step = 'choose_item';
-
-      const keyboard = items.map(item => ([{
-        text: `${item.name} — ${fmt(item.price)}`
-      }]));
-      keyboard.push([{ text: '🔙 Menyuga qaytish' }]);
-
-      bot.sendMessage(chatId, `<b>📂 ${catName}</b>`, {
-        parse_mode: 'HTML',
-        reply_markup: { keyboard, resize_keyboard: true }
-      });
+      await showItems(chatId, sess, cat);
     }
 
-    else if (sess.step === 'choose_item') {
-      const item = sess.currentItems?.find(i => text.includes(i.name));
-      if (item) {
-        sess.cart[item.id] = {
-          ...item,
-          qty: (sess.cart[item.id]?.qty || 0) + 1
-        };
-        const total = Object.values(sess.cart).reduce((s, i) => s + i.price * i.qty, 0);
-        bot.sendMessage(chatId,
-          `✅ <b>${item.name}</b> qo'shildi!\nSavatda: ${fmt(total)}\n\nDavom etish yoki 🛒 Savatcha`,
-          { parse_mode: 'HTML' }
-        );
-      } else if (text === '🔙 Menyuga qaytish') {
-        sess.step = 'menu';
-      }
+    else if (text === '🔙 Menyuga qaytish') {
+      if (sess.restoId) await showCategories(chatId, sess);
+      else mainMenu(chatId);
     }
 
     else if (text === '🛒 Savatcha') {
@@ -248,6 +300,30 @@ const initBot = (app) => {
         { parse_mode: 'HTML' }
       );
       mainMenu(chatId, '✅ Buyurtmangiz restoranga yuborildi!');
+    }
+
+    else if (text === '👤 Profil') {
+      if (!sess.userId) {
+        bot.sendMessage(chatId, '⚠️ Avval /start bosing');
+        return;
+      }
+      const { count } = await supabase
+        .from('orders')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', sess.userId);
+
+      const addr = (sess.userLat && sess.userLon)
+        ? `${sess.userLat.toFixed(4)}, ${sess.userLon.toFixed(4)}`
+        : 'Kiritilmagan (📍 Manzilim tugmasini bosing)';
+
+      bot.sendMessage(chatId,
+        `👤 <b>Profilingiz</b>\n\n` +
+        `Ism: ${sess.userName || '—'}\n` +
+        `🆔 ID: <code>${chatId}</code>\n` +
+        `📦 Buyurtmalar soni: ${count || 0} ta\n` +
+        `📍 Manzil: ${addr}`,
+        { parse_mode: 'HTML' }
+      );
     }
 
     else if (text === '📦 Buyurtmalarim') {
