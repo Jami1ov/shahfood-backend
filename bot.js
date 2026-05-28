@@ -54,6 +54,17 @@ const initBot = (app) => {
     });
   };
 
+  const askGender = (chatId, sess) => {
+    sess.step = 'await_gender';
+    bot.sendMessage(chatId, 'Oxirgi savol — jinsingizni tanlang 👇', {
+      reply_markup: {
+        keyboard: [[{ text: '👨 Erkak' }, { text: '👩 Ayol' }]],
+        resize_keyboard: true,
+        one_time_keyboard: true
+      }
+    });
+  };
+
   // Restoran kategoriyalarini ko'rsatish
   const showCategories = async (chatId, sess) => {
     const { data: cats } = await supabase
@@ -239,8 +250,7 @@ const initBot = (app) => {
       }
 
       if (sess.step === 'await_location') {
-        sess.step = 'start';
-        mainMenu(chatId, '✅ Manzilingiz saqlandi! Endi buyurtma berishingiz mumkin. 🍽️');
+        askGender(chatId, sess);
       } else {
         bot.sendMessage(chatId, '📍 Manzilingiz yangilandi!');
       }
@@ -428,8 +438,19 @@ const initBot = (app) => {
     }
 
     else if (text === '⏭ Keyinroq') {
+      if (sess.step === 'await_location') {
+        askGender(chatId, sess);
+      } else {
+        sess.step = 'start';
+        mainMenu(chatId);
+      }
+    }
+
+    else if (sess.step === 'await_gender' && (text === '👨 Erkak' || text === '👩 Ayol')) {
+      const gender = text.includes('Erkak') ? 'male' : 'female';
+      if (sess.userId) await supabase.from('users').update({ gender }).eq('id', sess.userId);
       sess.step = 'start';
-      mainMenu(chatId);
+      mainMenu(chatId, '✅ Ro\'yxatdan to\'liq o\'tdingiz! Endi buyurtma berishingiz mumkin. 🍽️');
     }
 
     else if (text === '🔙 Orqaga' || text === '❌ Bekor qilish') {
