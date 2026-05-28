@@ -136,12 +136,23 @@ router.patch('/:id/stage', auth, async (req, res) => {
   const stageMsg = [
     'Buyurtmangiz qabul qilindi va restoran tasdiqlashini kutmoqda',
     'Buyurtmangiz tayyorlanmoqda',
-    'Kuryer yo\'lga chiqdi',
+    'Buyurtmangiz tayyor — kuryer izlanmoqda',
     'Buyurtmangiz yetkazildi! Yoqimli ishtaha 🍽️'
   ];
   if (order.users?.telegram_id) {
     const msg = `${stageEmojis[newStage]} <b>Buyurtma #${order.id}</b>\n${order.restaurants?.emoji || '🍽️'} ${order.restaurants?.name || ''}\n\n${stageMsg[newStage]}`;
     await notifyTelegram(order.users.telegram_id, msg);
+  }
+
+  // Stage 2 ga o'tdi — barcha bo'sh kuryerlarga e'lon
+  if (newStage === 2) {
+    try {
+      const { broadcastToCouriers } = require('../kuryer_bot');
+      const result = await broadcastToCouriers(req.app, order);
+      console.log(`📣 Kuryerlarga e'lon: ${result?.sent || 0} ta yuborildi`);
+    } catch (e) {
+      console.error('Kuryer e\'loni xato:', e.message);
+    }
   }
 
   res.json(order);

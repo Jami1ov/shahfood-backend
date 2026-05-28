@@ -63,6 +63,9 @@ app.use((err, req, res, next) => {
 const { initBot } = require('./bot');
 initBot(app);
 
+const { initKuryerBot } = require('./kuryer_bot');
+initKuryerBot(app);
+
 // ── Start ───────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`
