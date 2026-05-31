@@ -91,7 +91,9 @@ router.get('/', auth, async (req, res) => {
 });
 
 // GET /api/orders/:id
-router.get('/:id', auth, async (req, res) => {
+// Muhim: faqat raqamli id qabul qilamiz. Aks holda /restaurant/mine va
+// /admin/all kabi maxsus yo'llar adashib shu route'ga tushib qoladi.
+router.get('/:id(\\d+)', auth, async (req, res) => {
   const { data, error } = await supabase
     .from('orders')
     .select('*, restaurants(name, emoji, bg_gradient)')
@@ -103,7 +105,7 @@ router.get('/:id', auth, async (req, res) => {
 });
 
 // PATCH /api/orders/:id/stage — holat yangilash (admin/courier/restaurant_owner)
-router.patch('/:id/stage', auth, async (req, res) => {
+router.patch('/:id(\\d+)/stage', auth, async (req, res) => {
   if (!['admin', 'courier', 'restaurant_owner'].includes(req.user.role))
     return res.status(403).json({ error: 'Ruxsat yo\'q' });
 
@@ -195,7 +197,7 @@ router.get('/restaurant/mine', auth, async (req, res) => {
 });
 
 // POST /api/orders/:id/review — sharh
-router.post('/:id/review', auth, async (req, res) => {
+router.post('/:id(\\d+)/review', auth, async (req, res) => {
   const { restaurant_rating, courier_rating, tags, comment } = req.body;
 
   const { data: order } = await supabase

@@ -104,12 +104,17 @@ router.post('/restaurants', async (req, res) => {
 });
 
 router.patch('/restaurants/:id', async (req, res) => {
-  const allowed = ['name', 'address', 'phone', 'lat', 'lon', 'emoji', 'delivery_fee', 'min_order', 'is_open', 'rating'];
+  const allowed = ['name', 'address', 'phone', 'lat', 'lon', 'emoji', 'delivery_fee', 'min_order', 'is_open', 'rating', 'work_hours'];
   const updates = {};
   for (const k of allowed) if (k in req.body) updates[k] = req.body[k];
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('restaurants').update(updates).eq('id', req.params.id).select().single();
+  if (error && /work_hours/i.test(error.message || '')) {
+    delete updates.work_hours;
+    ({ data, error } = await supabase
+      .from('restaurants').update(updates).eq('id', req.params.id).select().single());
+  }
   if (error) return res.status(400).json({ error: error.message });
   res.json(data);
 });

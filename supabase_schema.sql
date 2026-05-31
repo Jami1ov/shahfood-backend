@@ -30,6 +30,7 @@ CREATE TABLE restaurants (
   delivery_fee INTEGER DEFAULT 8000,
   min_order INTEGER DEFAULT 20000,
   is_open BOOLEAN DEFAULT true,
+  work_hours VARCHAR(80) DEFAULT '09:00 - 23:00',
   owner_telegram_id BIGINT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -51,6 +52,7 @@ CREATE TABLE menu_items (
   description TEXT,
   price INTEGER NOT NULL,
   image_url TEXT,
+  gallery_images TEXT[] DEFAULT '{}',
   is_available BOOLEAN DEFAULT true,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );

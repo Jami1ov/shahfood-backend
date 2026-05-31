@@ -23,6 +23,25 @@ app.use('/api/restaurants', require('./routes/restaurants'));
 app.use('/api/orders',      require('./routes/orders'));
 app.use('/api/admin',       require('./routes/admin'));
 
+// Admin panel va monitoring uchun yengil status endpointlari
+app.get('/api/telegram/status', (req, res) => res.json({
+  customer_bot: Boolean(process.env.TELEGRAM_BOT_TOKEN),
+  courier_bot: Boolean(process.env.KURYER_BOT_TOKEN),
+  customer_bot_username: process.env.BOT_USERNAME || 'dasturxon_app_bot',
+  courier_bot_username: process.env.KURYER_BOT_USERNAME || 'dasturxon_kuryer_bot'
+}));
+
+app.get('/api/couriers', async (req, res) => {
+  const supabase = require('./config/supabase');
+  const { data, error } = await supabase
+    .from('users')
+    .select('id, name, phone, telegram_id, is_available, courier_lat, courier_lon')
+    .eq('role', 'courier')
+    .order('name');
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data || []);
+});
+
 // Promo kod tekshirish
 app.post('/api/promo/validate', async (req, res) => {
   const { code } = req.body;

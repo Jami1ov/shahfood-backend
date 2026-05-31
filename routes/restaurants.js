@@ -80,6 +80,11 @@ router.get('/:id', async (req, res) => {
   res.json(data);
 });
 
+const mapMenuItem = item => ({
+  ...item,
+  gallery: item.gallery_images || item.gallery || []
+});
+
 // GET /api/restaurants/:id/menu
 // Qaytadi: { categories: [...], items: [...] }
 // Mehmonlar uchun faqat is_available=true, egalar uchun hammasi
@@ -106,7 +111,7 @@ router.get('/:id/menu', async (req, res) => {
   if (!editorMode) itemsQuery = itemsQuery.eq('is_available', true);
   const { data: items } = await itemsQuery;
 
-  res.json({ categories: categories || [], items: items || [] });
+  res.json({ categories: categories || [], items: (items || []).map(mapMenuItem) });
 });
 
 // GET /api/restaurants/:id/reviews
@@ -130,6 +135,31 @@ router.post('/', auth, adminOnly, async (req, res) => {
 router.put('/:id', auth, adminOnly, async (req, res) => {
   const { data, error } = await supabase
     .from('restaurants').update(req.body).eq('id', req.params.id).select().single();
+  if (error) return res.status(400).json({ error: error.message });
+  res.json(data);
+});
+
+// PATCH /api/restaurants/:id — admin yoki restoran egasi restoran sozlamalarini o'zgartiradi
+router.patch('/:id', auth, async (req, res) => {
+  if (!(await canEditRestaurant(req.user, req.params.id)))
+    return res.status(403).json({ error: 'Ruxsat yo\'q' });
+
+  const allowed = [
+    'name', 'address', 'phone', 'lat', 'lon', 'category', 'emoji', 'badge',
+    'bg_gradient', 'delivery_fee', 'min_order', 'is_open', 'work_hours'
+  ];
+  const updates = {};
+  for (const key of allowed) {
+    if (key in req.body) updates[key] = req.body[key];
+  }
+
+  let { data, error } = await supabase
+    .from('restaurants').update(updates).eq('id', req.params.id).select().single();
+  if (error && /work_hours/i.test(error.message || '')) {
+    delete updates.work_hours;
+    ({ data, error } = await supabase
+      .from('restaurants').update(updates).eq('id', req.params.id).select().single());
+  }
   if (error) return res.status(400).json({ error: error.message });
   res.json(data);
 });
@@ -209,7 +239,7 @@ router.post('/:id/menu/items', auth, async (req, res) => {
   if (!(await canEditRestaurant(req.user, req.params.id)))
     return res.status(403).json({ error: 'Ruxsat yo\'q' });
 
-  const { category_id, name, description, price, image_base64, image_url } = req.body;
+  const { category_id, name, description, price, image_base64, image_url, gallery, gallery_images } = req.body;
   if (!name?.trim() || !price || !category_id)
     return res.status(400).json({ error: 'Nom, narx va kategoriya kerak' });
 
@@ -219,17 +249,25 @@ router.post('/:id/menu/items', auth, async (req, res) => {
     catch (e) { return res.status(500).json({ error: e.message }); }
   }
 
-  const { data, error } = await supabase.from('menu_items').insert({
+  const galleryImages = Array.isArray(gallery_images) ? gallery_images : (Array.isArray(gallery) ? gallery : []);
+  const payload = {
     restaurant_id: +req.params.id,
     category_id: +category_id,
     name: name.trim(),
     description: description?.trim() || null,
     price: +price,
     image_url: finalImageUrl,
+    gallery_images: galleryImages,
     is_available: true
-  }).select().single();
+  };
+
+  let { data, error } = await supabase.from('menu_items').insert(payload).select().single();
+  if (error && /gallery_images/i.test(error.message || '')) {
+    delete payload.gallery_images;
+    ({ data, error } = await supabase.from('menu_items').insert(payload).select().single());
+  }
   if (error) return res.status(400).json({ error: error.message });
-  res.json(data);
+  res.json(mapMenuItem(data));
 });
 
 // PATCH /api/restaurants/menu/items/:itemId — taomni tahrirlash
@@ -247,16 +285,23 @@ router.patch('/menu/items/:itemId', auth, async (req, res) => {
   if (req.body.category_id != null) updates.category_id = +req.body.category_id;
   if (req.body.is_available != null) updates.is_available = !!req.body.is_available;
   if (req.body.image_url !== undefined) updates.image_url = req.body.image_url;
+  if (Array.isArray(req.body.gallery_images)) updates.gallery_images = req.body.gallery_images;
+  else if (Array.isArray(req.body.gallery)) updates.gallery_images = req.body.gallery;
 
   if (req.body.image_base64) {
     try { updates.image_url = await uploadImage(req.body.image_base64, 'item'); }
     catch (e) { return res.status(500).json({ error: e.message }); }
   }
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('menu_items').update(updates).eq('id', req.params.itemId).select().single();
+  if (error && /gallery_images/i.test(error.message || '')) {
+    delete updates.gallery_images;
+    ({ data, error } = await supabase
+      .from('menu_items').update(updates).eq('id', req.params.itemId).select().single());
+  }
   if (error) return res.status(400).json({ error: error.message });
-  res.json(data);
+  res.json(mapMenuItem(data));
 });
 
 // DELETE /api/restaurants/menu/items/:itemId
