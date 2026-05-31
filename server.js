@@ -12,9 +12,15 @@ const PORT = process.env.PORT || 3001;
 app.use(helmet());
 app.use(cors({ origin: '*', methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'], allowedHeaders: ['Content-Type','Authorization'] }));app.use(express.json({ limit: '8mb' }));
 app.use(morgan('dev'));
+app.set('trust proxy', 1);
 
 // Rate limiting — spam himoyasi
-const limiter = rateLimit({ windowMs: 15*60*1000, max: 200 });
+const limiter = rateLimit({
+  windowMs: 15*60*1000,
+  max: Number(process.env.API_RATE_LIMIT || 3000),
+  standardHeaders: true,
+  legacyHeaders: false
+});
 app.use('/api/', limiter);
 
 // ── Routes ──────────────────────────────────────
@@ -31,7 +37,10 @@ app.get('/api/telegram/status', (req, res) => res.json({
   courier_bot_username: process.env.KURYER_BOT_USERNAME || 'dasturxon_kuryer_bot'
 }));
 
-app.get('/api/couriers', async (req, res) => {
+app.get('/api/couriers', require('./middleware/auth').auth, async (req, res) => {
+  if (!['admin', 'restaurant_owner'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Ruxsat yo\'q' });
+  }
   const supabase = require('./config/supabase');
   const { data, error } = await supabase
     .from('users')
